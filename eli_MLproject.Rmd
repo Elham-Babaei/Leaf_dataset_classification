@@ -1,0 +1,319 @@
+---
+title: "ML project"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r}
+
+d <- read.csv("leaf.csv",header = TRUE)
+d$Class <- factor(d$Class)
+d
+d2 <- d[,-2]
+d2
+
+#set.seed(123)
+train.idx <- sample(nrow(d2))[1:(nrow(d2)*0.8)]
+#train.idx <- sample(nrow(d2),0.8*nrow(d2))
+train.idx
+```
+
+``` {r}
+library(caret)
+set.seed(100)
+
+rpartmod <- train(Class ~ ., data=d, method="rpart")
+rpartImp <- varImp(rpartmod)
+rpartImp
+#Regularized Random Forest (RRF) algorithm
+rrfmod <- train(Class ~. , data=d, method="RRF") 
+rrfImp <- varImp(rrfmod, scale=FALSE)
+rrfImp
+```
+``` {r}
+#plots
+plot(rrfImp, main='Variable Importance - RRF')
+
+library(randomForest)
+library(caret)
+rf <- randomForest(Class ~ ., data=d)
+varImpPlot(rf,type=2, main="Variable importance - RF")
+
+
+barplot(prop.table(table(d$Class)), xlab= "Class")
+library(tidyverse)
+ggplot(data=d, aes(y=Class, x=Specimen.Number, color=Class))+ geom_point()
+
+library(tidyverse)
+ggplot(data=d, aes(y=Class, x=Solidity, color=Class))+ geom_point()
+```
+``` {r}
+#boosting
+library(adabag)
+library(caret)
+m.adaboost <- boosting(Class ~ . , d2[train.idx,], mfinal = 40, control = rpart.control(maxdepth = 5))
+#importanceplot(m.adaboost)
+
+m.predboosting <- predict.boosting(m.adaboost,d2)
+m.predboosting
+
+#cv error for boosting
+m.adaboostcv <- boosting.cv(Class ~ . , v=10, data=d2[-train.idx], control = rpart.control(maxdepth = 10))
+m.adaboostcv$error
+
+
+```
+
+``` {r}
+#cv error for boosting
+require(dplyr)
+require(tidyverse)
+require(rlang)
+cv.error.b = function(formula, learner, data, k, ...) {
+  indexes = sample(nrow(data))
+  errs = c(1:k) %>% map_dbl(function(i) {
+    indexes.test = indexes[c((nrow(data)/k*(i-1)+1):(nrow(data)/k*i))]
+    m = learner(formula, data[-indexes.test,], ...)
+    predicted.y = predict.boosting(m, data[indexes.test,])
+    predicted.y$error
+    
+  })
+  names(errs) = paste0("fold", c(1:k))
+  errs
+  
+  c( mean=mean(errs),  sd=sd(errs))
+ 
+}
+
+
+cv.error.b(Class ~ ., boosting, d2, 10, control = rpart.control(maxdepth = 5))
+
+```
+``` {r}
+# baseline
+library(MASS)
+m.lda.b <- lda(Class ~ Solidity+Aspect.Ratio+Elongation+Average.Intensity+Smoothness+Uniformity, d2)
+#m.lda.b
+
+#lda
+m.lda <- lda(Class ~ ., d2[train.idx, ])
+#m.lda
+
+# error rate using training data
+pred.lda <- predict(m.lda, d2[-train.idx, ], type="class")
+missclass <- table(pred.lda$class, d2[-train.idx, 1])
+error.lda <- 1- sum(diag(missclass))/sum(missclass)  #1-mean(pred.lda$class==d2$Class)
+cat("LDA error on test data: \n")
+error.lda
+```
+
+
+``` {r}
+# cv error for baseline and LDA
+require(tidyverse)
+require(dplyr)
+require(rlang)
+cv.error.lda = function(formula, learner, data, k, ...) {
+  indexes = sample(nrow(data))
+  errs = c(1:k) %>% map_dbl(function(i) {
+    indexes.test = indexes[c((nrow(data)/k*(i-1)+1):(nrow(data)/k*i))]
+    m = learner(formula, data[-indexes.test,], ...)
+    predicted.y = predict(m, data[indexes.test,], type = "class")
+    actual.y = data[indexes.test, as.character(f_lhs(formula))]
+    confusion.matrix = table(actual.y, predicted.y$class) #  1-mean(predicted.y$class == actual.y)
+    1-sum(diag(confusion.matrix))/sum(confusion.matrix)
+  })
+  names(errs) = paste0("fold", c(1:k))
+  errs
+ c( mean=mean(errs),  sd=sd(errs))
+}
+cat("baseline \n")
+cv.error.lda(Class ~ Solidity+Aspect.Ratio+Elongation+Average.Intensity+Smoothness+Uniformity, lda, d2, 10)
+
+cat("lda \n")
+cv.error.lda(Class ~ ., lda, d2, 10)
+
+```
+
+``` {r}
+#random forest
+
+library(randomForest)
+library(caret)
+
+m.rf <- randomForest(Class ~ . ,d2[train.idx, ], importance=TRUE)
+m.rf
+
+pred.rf <- predict(m.rf,d2[-train.idx,], type="class")
+pred.rf
+
+```
+
+``` {r}
+#svm
+require(e1071)
+# the best kernel is linear according to above plot
+m.svm <- svm(Class ~ . , d2[train.idx, ], kernel= "linear")
+#m.svm
+
+# error rate using training data
+pred.svm <- predict(m.svm, d2[-train.idx,], type="class")
+missclass <- table(pred.svm, d2[-train.idx, 1])
+error.svm <- 1- sum(diag(missclass))/sum(missclass)
+cat("SVM error on training data: \n")
+error.svm
+
+# pred.prob <- predict(m.svm1, d2[ ,-1], decision.values = TRUE, probability = TRUE)
+# head(attr(pred.prob, "probabilities", 5))
+```
+
+``` {r}
+#cv error for Rf and svm
+require(dplyr)
+require(rlang)
+cv.error.rs = function(formula, learner, data, k, ...) {
+  indexes = sample(nrow(data))
+  errs = c(1:k) %>% map_dbl(function(i) {
+    indexes.test = indexes[c((nrow(data)/k*(i-1)+1):(nrow(data)/k*i))]
+    m = learner(formula, data[-indexes.test,], ...)
+    predicted.y = predict(m, data[indexes.test,], type = "class")
+    actual.y = data[indexes.test, as.character(f_lhs(formula))]
+    confusion.matrix = table(actual.y, predicted.y)
+    1-sum(diag(confusion.matrix))/sum(confusion.matrix)
+  })
+  names(errs) = paste0("fold", c(1:k))
+  errs
+  
+  c( mean=mean(errs),  sd=sd(errs))
+ 
+}
+cat("svm\n")
+cv.error.rs(Class ~ ., svm, d2, 10,kernel= "linear")
+cat("RF\n")
+cv.error.rs(Class ~ ., randomForest, d2, 10)
+```
+
+``` {r}
+results = expand_grid(kernel=c("linear","polynomial","radial","sigmoid"), cost=exp(seq(-6,8,1))) %>% rowwise() %>% mutate(error = mean(cv.error.rs(Class~., svm, d2, 10, kernel=kernel, cost=cost, degree=2)))
+results %>% ggplot(aes(x=cost,y=error,color=kernel)) + geom_line() + scale_x_log10() + geom_point()
+```
+
+
+
+``` {r}
+#cv error for Rf and svm
+c("svm", "randomForest") %>% map_dfr(function(learner.name) {c(learner=learner.name, cv.error.rs(Class~., learner=get(learner.name), d2, 10,  kernel="linear" ))}) %>% pivot_longer(cols=-c("learner")) 
+#%>% mutate(value=as.numeric(value))  
+
+#%>% group_by(learner) %>% summarise_at(vars(value), list(mean=mean,sd=sd))
+
+```
+
+```{r}
+#F1 score
+# f1_score <- function(predicted, expected, positive.class="1") {
+#     predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+#     expected  <- as.factor(expected)
+#     cm = as.matrix(table(expected, predicted))
+# 
+#     precision <- diag(cm) / colSums(cm)
+#     recall <- diag(cm) / rowSums(cm)
+#     f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+# 
+#     #Assuming that F1 is zero when it's not possible compute it
+#     f1[is.na(f1)] <- 0
+# 
+#     #Binary F1 or Multi-class macro-averaged F1
+#     ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+# }
+# 
+# models <- paste(c("RF", "SVM", "LDA"))
+# F1 <- c(f1_score(pred.rf,d2$Class),f1_score(pred.svm,d2$Class), f1_score(pred.lda$class,d2$Class))
+# data.frame(models,F1)
+# 
+# 
+# 
+# library(caret)
+# 
+# y <- d2$Class
+# predictions <- pred.rf
+# 
+# precision <- posPredValue(predictions, y, positive="1")
+# recall <- sensitivity(predictions, y, positive="1")
+# 
+# F1 <- (2 * precision * recall) / (precision + recall)
+
+library(caret)
+cm.rf <- confusionMatrix(pred.rf, d2[-train.idx,1])
+cm.svm <- confusionMatrix(pred.svm, d2[-train.idx,1])
+cm.lda <- confusionMatrix(pred.lda$class, d2[-train.idx,1])
+
+F1.RF <- cm.rf[["byClass"]][ , "F1"]
+F1.SVM <- cm.svm[["byClass"]][ , "F1"]
+F1.LDA <-cm.lda[["byClass"]][ , "F1"]
+mean(F1.RF)
+mean(F1.SVM)
+mean(F1.LDA)
+
+sen.RF <- cm.rf[["byClass"]][ , "Sensitivity"]
+sen.SVM <- cm.svm[["byClass"]][ , "Sensitivity"]
+sen.LDA <-cm.lda[["byClass"]][ , "Sensitivity"]        
+mean(sen.RF)
+mean(sen.SVM)
+mean(sen.LDA)
+
+pre.RF <- cm.rf[["byClass"]][ , "Precision"]
+pre.SVM <- cm.svm[["byClass"]][ , "Precision"]
+pre.LDA <-cm.lda[["byClass"]][ , "Precision"]
+mean(pre.RF)
+mean(pre.SVM)
+mean(pre.LDA)
+
+data.frame(sen.RF,pre.RF,F1.RF, sen.SVM, pre.SVM,F1.SVM,sen.LDA,pre.LDA,F1.LDA)
+      
+ #for multiclass classification problems
+
+```
+
+
+
+``` {r}
+# library(multiROC)
+# aucc <- multi_roc(data.frame(d2$Class, pred.svm))
+# plot(aucc)
+
+#only for binary
+# library("ROCR")
+# pred <- prediction(predict(m.rf,d2[,-1], type = "prob"), d2$Class) #prediction from ROCR package
+# plot(performance(pred, "tpr", "fpr"))
+# abline(0, 1, lty = 2)
+
+
+#auc for muti-classification
+library(pROC)
+roc.rf <- multiclass.roc(d2[-train.idx,1],as.ordered(pred.rf))
+#roc.rf
+roc.svm <- multiclass.roc(d2[-train.idx,1],as.ordered(pred.svm))
+#roc.svm
+roc.lda <- multiclass.roc(d2[-train.idx,1],as.ordered(pred.lda$class))
+#roc.lda
+data.frame(roc.rf$auc, roc.svm$auc, roc.lda$auc)
+
+ rs <- roc.rf[['rocs']]  #roc2$rocs
+ plot.roc(rs[[1]], xlim = c(0,1), ylim=c(0,1), print.thres=TRUE, legacy.axes= TRUE)
+sapply(2:length(rs),function(i) lines.roc(rs[[i]],col=i))
+
+
+
+ plot(roc2$rocs, ylim=c(0,1), print.thres=TRUE, main=paste('AUC:',round(auc$auc[[1]],2)))
+ abline(h=1,col='blue',lwd=2)
+ abline(h=0,col='red',lwd=2)
+
+ 
+ library(PRROC)
+```
+
+
