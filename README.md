@@ -1,2 +1,2 @@
 # Introduction-to-ML-project
-Professor Medvet- leaf dataset classification
+Prof Medvet- leaf dataset classification
