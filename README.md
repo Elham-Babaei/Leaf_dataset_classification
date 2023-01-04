@@ -1,3 +1,5 @@
-# Introduction to ML project
+## Classification of Leaf dataset coded in R 
 
-classification on Leaf dataset coded in R
+The project of Introduction to ML course.
+
+
