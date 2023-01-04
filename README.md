@@ -1,2 +1,3 @@
-# Introduction-to-ML-project
-Prof Medvet- leaf dataset classification
+# Introduction to ML project
+
+classification on Leaf dataset coded in R
