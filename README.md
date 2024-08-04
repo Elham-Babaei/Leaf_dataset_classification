@@ -1,4 +1,4 @@
-## Classification of Leaf dataset coded in R 
+## Classification of Leaf dataset in R 
 
 The project of Machine Learning course.
 
